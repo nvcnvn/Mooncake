@@ -1,0 +1,59 @@
+name: E810 fix wheel
+
+# Builds test wheels of this branch with the upstream wheel workflow and
+# attaches them to a pre-release on this fork: non-cuda for transfer_engine_bench
+# on the host, cuda13 for lmsysorg/sglang images that ship
+# mooncake-transfer-engine-cuda13. The tag does not start with 'v', so the
+# upstream release workflows do not run.
+
+on:
+  push:
+    branches: [e810fix-*]
+  workflow_dispatch:
+
+env:
+  VERSION: 0.3.13.post1+e810fix
+
+jobs:
+  version:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [non-cuda, cuda13]
+    uses: ./.github/workflows/_build-wheel.yaml
+    with:
+      variant: ${{ matrix.variant }}
+      architecture: x86_64
+      python-versions: '["3.12"]'
+      artifact-prefix: mooncake-wheel-${{ matrix.variant }}
+      version-override: ${{ needs.version.outputs.version }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mooncake-wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Publish to a pre-release on this fork
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="e810fix-${VERSION//+/-}-${GITHUB_SHA::7}"
+          ls -la dist
+          gh release create "$TAG" dist/*.whl --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "$TAG" \
+            --notes "Mooncake $VERSION: $GITHUB_REF_NAME at $GITHUB_SHA. Test build, not an upstream release."
